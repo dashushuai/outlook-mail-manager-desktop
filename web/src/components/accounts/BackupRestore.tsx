@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { resolveBackupApiUrl } from '../../lib/backupApi';
 import { getDesktopFileShellContainer, isDesktopFileDialogAvailable, openDesktopFile } from '../../lib/desktopFiles';
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -33,7 +34,7 @@ export default function BackupRestore() {
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const res = await fetch('/api/backup/download', { headers });
+      const res = await fetch(resolveBackupApiUrl('/backup/download'), { headers });
       if (!res.ok) throw new Error('下载失败');
 
       const blob = await res.blob();
@@ -51,7 +52,7 @@ export default function BackupRestore() {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const res = await fetch('/api/backup/restore', {
+      const res = await fetch(resolveBackupApiUrl('/backup/restore'), {
         method: 'POST',
         headers,
         body: JSON.stringify({ fileContent })

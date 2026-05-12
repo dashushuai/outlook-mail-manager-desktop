@@ -9,7 +9,7 @@ function resolveDesktopApiBase(currentWindow: Pick<Window, 'desktopShell' | 'loc
   return serverUrl ? `${serverUrl}/api` : null;
 }
 
-export function resolveApiBase(currentWindow = typeof window === 'undefined' ? undefined : window): string {
+export function resolveApiBase(currentWindow: Pick<Window, 'desktopShell' | 'location'> | undefined = typeof window === 'undefined' ? undefined : window): string {
   if (currentWindow) {
     const desktopApiBase = resolveDesktopApiBase(currentWindow);
 
