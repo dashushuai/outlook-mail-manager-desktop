@@ -48,6 +48,27 @@ test('startServerWithModules closes the database when listen fails', async () =>
   assert.equal(closeDbCalls, 1);
 });
 
+test('resolveListeningServerConfig returns the assigned random port after listen', async () => {
+  const serverModule = await import('./server');
+
+  assert.equal(typeof serverModule.resolveListeningServerConfig, 'function');
+
+  if (typeof serverModule.resolveListeningServerConfig !== 'function') {
+    return;
+  }
+
+  const config = serverModule.resolveListeningServerConfig(
+    { host: '127.0.0.1', port: 0, url: 'http://127.0.0.1:0' },
+    { address: () => ({ address: '127.0.0.1', family: 'IPv4', port: 49152 }) } as never,
+  );
+
+  assert.deepEqual(config, {
+    host: '127.0.0.1',
+    port: 49152,
+    url: 'http://127.0.0.1:49152',
+  });
+});
+
 test('startServerWithModules closes the database when migrations fail', async () => {
   const serverModule = await import('./server');
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AppLayout } from './components/layout/AppLayout';
 import Dashboard from './pages/Dashboard';
@@ -7,8 +7,10 @@ import Accounts from './pages/Accounts';
 import ProxySettings from './pages/ProxySettings';
 import { LoginDialog } from './components/auth/LoginDialog';
 import { authApi } from './lib/api';
+import { selectAppRouter } from './lib/appRouter';
 
 export default function App() {
+  const Router = selectAppRouter();
   const [authRequired, setAuthRequired] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -37,7 +39,7 @@ export default function App() {
   }
 
   return (
-    <BrowserRouter>
+    <Router>
       <Toaster position="top-right" richColors closeButton />
       {authRequired && <LoginDialog open={showLogin} onSuccess={() => setShowLogin(false)} />}
       <Routes>
@@ -48,6 +50,6 @@ export default function App() {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Routes>
-    </BrowserRouter>
+    </Router>
   );
 }

@@ -2,7 +2,7 @@ import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 
 export const DEFAULT_SERVER_HOST = '127.0.0.1';
-export const DEFAULT_SERVER_PORT = 3000;
+export const DEFAULT_SERVER_PORT = 0;
 
 type DesktopServerEnv = {
   ELECTRON_SERVER_HOST?: string;
@@ -31,6 +31,7 @@ export type EmbeddedServerModulePaths = {
 };
 
 let embeddedServer: Server | null = null;
+let embeddedServerConfig: DesktopServerConfig | null = null;
 let embeddedServerStartPromise: Promise<DesktopServerConfig> | null = null;
 
 export function applyEmbeddedServerEnv(env: DesktopServerEnv = process.env): void {
@@ -195,9 +196,23 @@ export function resolveDesktopServerConfig(env: DesktopServerEnv = process.env):
   };
 }
 
+export function resolveListeningServerConfig(config: DesktopServerConfig, server: Pick<Server, 'address'>): DesktopServerConfig {
+  const address = server.address();
+
+  if (!address || typeof address === 'string') {
+    return config;
+  }
+
+  return {
+    host: config.host,
+    port: address.port,
+    url: `http://${config.host}:${address.port}`,
+  };
+}
+
 export async function startEmbeddedServer(env: DesktopServerEnv = process.env): Promise<DesktopServerConfig> {
   if (embeddedServer?.listening) {
-    return resolveDesktopServerConfig(env);
+    return embeddedServerConfig ?? resolveListeningServerConfig(resolveDesktopServerConfig(env), embeddedServer);
   }
 
   if (embeddedServerStartPromise) {
@@ -210,12 +225,15 @@ export async function startEmbeddedServer(env: DesktopServerEnv = process.env): 
     applyEmbeddedServerEnv(env);
     const modules = loadEmbeddedServerModules();
     const server = await startServerWithModules(config, modules);
+    const listeningConfig = resolveListeningServerConfig(config, server);
     embeddedServer = server;
+    embeddedServerConfig = listeningConfig;
     embeddedServerStartPromise = null;
 
-    return config;
+    return listeningConfig;
   })().catch((error) => {
     embeddedServer = null;
+    embeddedServerConfig = null;
     embeddedServerStartPromise = null;
     throw error;
   });
@@ -235,6 +253,7 @@ export async function stopEmbeddedServer(): Promise<void> {
   const pendingStart = embeddedServerStartPromise;
   const server = await resolveServerForShutdown(embeddedServer, pendingStart, () => embeddedServer);
   embeddedServer = null;
+  embeddedServerConfig = null;
   embeddedServerStartPromise = null;
 
   await stopServerWithCleanup(server, server ? closeDb : null);

@@ -14,8 +14,8 @@ test('resolveDesktopServerConfig falls back to localhost defaults', async () => 
 
   assert.deepEqual(config, {
     host: '127.0.0.1',
-    port: 3000,
-    url: 'http://127.0.0.1:3000',
+    port: 0,
+    url: 'http://127.0.0.1:0',
   });
 });
 
@@ -66,8 +66,8 @@ test('resolveDesktopServerConfig ignores ports outside the TCP range', async () 
 
   const config = serverModule.resolveDesktopServerConfig({ PORT: '65536' });
 
-  assert.equal(config.port, 3000);
-  assert.equal(config.url, 'http://127.0.0.1:3000');
+  assert.equal(config.port, 0);
+  assert.equal(config.url, 'http://127.0.0.1:0');
 });
 
 test('resolveDesktopServerConfig ignores non-integer ports', async () => {
@@ -81,6 +81,6 @@ test('resolveDesktopServerConfig ignores non-integer ports', async () => {
 
   const config = serverModule.resolveDesktopServerConfig({ PORT: '1.5' });
 
-  assert.equal(config.port, 3000);
-  assert.equal(config.url, 'http://127.0.0.1:3000');
+  assert.equal(config.port, 0);
+  assert.equal(config.url, 'http://127.0.0.1:0');
 });
