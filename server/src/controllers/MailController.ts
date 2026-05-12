@@ -1,7 +1,7 @@
 import { Context } from 'koa';
-import { MailService } from '../services/MailService';
 import { MailCacheModel } from '../models/MailCache';
-import { success, fail } from '../utils/response';
+import { MailService } from '../services/MailService';
+import { fail, success } from '../utils/response';
 
 const mailService = new MailService();
 const cacheModel = new MailCacheModel();
@@ -9,7 +9,9 @@ const cacheModel = new MailCacheModel();
 export class MailController {
   async fetch(ctx: Context) {
     const { account_id, mailbox = 'INBOX', proxy_id } = ctx.request.body as any;
-    if (!account_id) return fail(ctx, 'account_id is required', 400);
+    if (!account_id) {
+      return fail(ctx, 'account_id is required', 400);
+    }
     try {
       const result = await mailService.fetchMails(account_id, mailbox, proxy_id);
       success(ctx, result);
@@ -20,7 +22,9 @@ export class MailController {
 
   async fetchNew(ctx: Context) {
     const { account_id, mailbox = 'INBOX', proxy_id } = ctx.request.body as any;
-    if (!account_id) return fail(ctx, 'account_id is required', 400);
+    if (!account_id) {
+      return fail(ctx, 'account_id is required', 400);
+    }
     try {
       const result = await mailService.fetchMails(account_id, mailbox, proxy_id, 1);
       success(ctx, result.mails[0] || null);
@@ -31,10 +35,12 @@ export class MailController {
 
   async clear(ctx: Context) {
     const { account_id, mailbox = 'INBOX', proxy_id } = ctx.request.body as any;
-    if (!account_id) return fail(ctx, 'account_id is required', 400);
+    if (!account_id) {
+      return fail(ctx, 'account_id is required', 400);
+    }
     try {
       await mailService.clearMailbox(account_id, mailbox, proxy_id);
-      cacheModel.clearByAccount(account_id, mailbox);
+      await cacheModel.clearByAccount(account_id, mailbox);
       success(ctx, { message: '邮件正在清空中...' });
     } catch (err: any) {
       fail(ctx, `Failed to clear mailbox: ${err.message}`);
@@ -43,8 +49,10 @@ export class MailController {
 
   async cached(ctx: Context) {
     const { account_id, mailbox = 'INBOX', page = '1', pageSize = '50' } = ctx.query as Record<string, string>;
-    if (!account_id) return fail(ctx, 'account_id is required', 400);
-    const data = cacheModel.getByAccount(parseInt(account_id), mailbox, parseInt(page), parseInt(pageSize));
+    if (!account_id) {
+      return fail(ctx, 'account_id is required', 400);
+    }
+    const data = await cacheModel.getByAccount(parseInt(account_id), mailbox, parseInt(page), parseInt(pageSize));
     success(ctx, data);
   }
 }

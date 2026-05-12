@@ -1,6 +1,27 @@
 import type { ApiResponse, PaginatedResponse, Account, MailMessage, Proxy, ImportRequest, ImportResult, ExportRequest, DashboardStats, ProxyTestResult, FetchMailsResult, Tag, ImportPreviewResult } from '../types';
 
-const API_BASE = '/api';
+function resolveDesktopApiBase(currentWindow: Pick<Window, 'desktopShell' | 'location'>): string | null {
+  if (currentWindow.location.protocol !== 'file:') {
+    return null;
+  }
+
+  const serverUrl = currentWindow.desktopShell?.getServerUrl()?.trim().replace(/\/+$/, '');
+  return serverUrl ? `${serverUrl}/api` : null;
+}
+
+export function resolveApiBase(currentWindow = typeof window === 'undefined' ? undefined : window): string {
+  if (currentWindow) {
+    const desktopApiBase = resolveDesktopApiBase(currentWindow);
+
+    if (desktopApiBase) {
+      return desktopApiBase;
+    }
+  }
+
+  return '/api';
+}
+
+const API_BASE = resolveApiBase();
 
 function qs(params?: Record<string, any>): string {
   if (!params) return '';

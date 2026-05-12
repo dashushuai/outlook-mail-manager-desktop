@@ -1,13 +1,22 @@
 import app from './app';
 import { config } from './config';
+import { initDb } from './database';
 import { runMigrations } from './database/migrations';
 import logger from './utils/logger';
 
-// 初始化数据库
-runMigrations();
-logger.info('Database migrations completed');
+async function startServer() {
+  try {
+    await initDb();
+    await runMigrations();
+    logger.info('Database initialization and migrations completed');
 
-// 启动服务
-app.listen(config.port, () => {
-  logger.info(`Server is running on http://localhost:${config.port}`);
-});
+    app.listen(config.port, () => {
+      logger.info(`Server is running on http://localhost:${config.port}`);
+    });
+  } catch (error: any) {
+    logger.error(`Failed to start server: ${error?.message || error}`);
+    process.exit(1);
+  }
+}
+
+void startServer();

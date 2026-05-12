@@ -1,0 +1,38 @@
+appId: com.outlook-mail-manager.app
+productName: Outlook Mail Manager
+directories:
+  output: release
+publish:
+  - provider: github
+    owner: dashushuai
+    repo: outlook-mail-manager-desktop
+files:
+  - dist-electron/**/*
+  - web/dist/**/*
+  - server/dist/**/*
+  - server/package.json
+  - server/node_modules/**/*
+  - package.json
+asarUnpack:
+  - server/node_modules/sqlite3/**/*
+  - server/node_modules/**/*.node
+artifactName: Outlook-Mail-Manager-Setup-${version}.${ext}
+win:
+  icon: build/icon.ico
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
+fileAssociations:
+  - ext: json
+    name: Outlook Mail Manager Account Import
+    description: Outlook Mail Manager account import file
+    role: Editor
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true

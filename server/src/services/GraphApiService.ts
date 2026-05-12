@@ -1,13 +1,13 @@
-import { ProxyService } from './ProxyService';
-import { MailMessage } from '../types';
 import logger from '../utils/logger';
+import { MailMessage } from '../types';
+import { ProxyService } from './ProxyService';
 
 const proxyService = new ProxyService();
 
 export class GraphApiService {
   async fetchMails(accessToken: string, mailbox: string, top = 50, proxyId?: number): Promise<Partial<MailMessage>[]> {
     const folder = mailbox === 'Junk' ? 'junkemail' : 'inbox';
-    const { agent, dispatcher, type } = proxyService.getAgent(proxyId);
+    const { agent, dispatcher, type } = await proxyService.getAgent(proxyId);
 
     const url = `https://graph.microsoft.com/v1.0/me/mailFolders/${folder}/messages?$top=${top}`;
     let response: any;
@@ -23,7 +23,9 @@ export class GraphApiService {
       const opts: any = {
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
       };
-      if (dispatcher) opts.dispatcher = dispatcher;
+      if (dispatcher) {
+        opts.dispatcher = dispatcher;
+      }
       response = await undiciFetch(url, opts);
     }
 
@@ -48,26 +50,29 @@ export class GraphApiService {
   }
 
   async deleteMail(accessToken: string, mailId: string, proxyId?: number): Promise<void> {
-    const { agent, dispatcher, type } = proxyService.getAgent(proxyId);
+    const { agent, dispatcher, type } = await proxyService.getAgent(proxyId);
     const url = `https://graph.microsoft.com/v1.0/me/messages/${mailId}`;
 
     if (type === 'socks5' && agent) {
       const nodefetch = require('node-fetch');
       await nodefetch(url, { method: 'DELETE', agent, headers: { Authorization: `Bearer ${accessToken}` } });
-    } else {
-      const { fetch: undiciFetch } = require('undici');
-      const opts: any = { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` } };
-      if (dispatcher) opts.dispatcher = dispatcher;
-      await undiciFetch(url, opts);
+      return;
     }
+
+    const { fetch: undiciFetch } = require('undici');
+    const opts: any = { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` } };
+    if (dispatcher) {
+      opts.dispatcher = dispatcher;
+    }
+    await undiciFetch(url, opts);
   }
 
   async deleteAllMails(accessToken: string, mailbox: string, proxyId?: number): Promise<void> {
     const mails = await this.fetchMails(accessToken, mailbox, 10000, proxyId);
     const batchSize = 10;
-    for (let i = 0; i < mails.length; i += batchSize) {
-      const batch = mails.slice(i, i + batchSize);
-      await Promise.allSettled(batch.map(m => this.deleteMail(accessToken, m.mail_id!, proxyId)));
+    for (let index = 0; index < mails.length; index += batchSize) {
+      const batch = mails.slice(index, index + batchSize);
+      await Promise.allSettled(batch.map((mail) => this.deleteMail(accessToken, mail.mail_id!, proxyId)));
     }
     logger.info(`Deleted ${mails.length} mails from ${mailbox}`);
   }

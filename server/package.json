@@ -5,10 +5,10 @@
   "scripts": {
     "dev": "npx tsx watch src/server.ts",
     "start": "npx tsx src/server.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "test": "tsx --test"
   },
   "dependencies": {
-    "better-sqlite3": "^11.7.0",
     "dotenv": "^16.5.0",
     "koa": "^3.1.1",
     "koa-bodyparser": "^4.4.1",
@@ -18,11 +18,12 @@
     "node-fetch": "^2.7.0",
     "node-imap": "^0.9.6",
     "socks-proxy-agent": "^8.0.5",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^6.0.1",
     "undici": "^6.22.0",
     "winston": "^3.17.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
     "@types/koa": "^2.15.0",
     "@types/koa-bodyparser": "^4.3.12",
     "@types/koa-router": "^7.4.8",

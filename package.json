@@ -2,15 +2,33 @@
   "name": "outlook-mail-manager",
   "version": "1.0.0",
   "private": true,
+  "main": "dist-electron/main.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
     "dev:server": "cd server && npm run dev",
     "dev:web": "cd web && npm run dev",
     "build": "cd web && npm run build",
     "start": "cd server && npm start",
+    "build:server": "cd server && npm run build",
+    "electron:compile": "npm run build:server && tsc -p electron/tsconfig.json",
+    "electron:build": "node electron/build.mjs",
+    "electron:start": "npm run build && npm run electron:compile && electron .",
+    "electron:dev": "concurrently -k \"npm run dev:web\" \"npm run electron:dev:app\"",
+    "electron:dev:app": "wait-on http-get://127.0.0.1:5173 && npm run electron:compile && set ELECTRON_RENDERER_URL=http://127.0.0.1:5173 && electron .",
+    "test:electron": "tsx --test electron/*.test.ts",
     "install:all": "npm install && cd server && npm install && cd ../web && npm install"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "@types/node": "^22.15.19",
+    "concurrently": "^9.1.2",
+    "electron": "^35.2.0",
+    "electron-builder": "^26.0.12",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "wait-on": "^8.0.5"
+  },
+  "dependencies": {
+    "electron-store": "^7.0.3",
+    "electron-updater": "^6.8.3"
   }
 }

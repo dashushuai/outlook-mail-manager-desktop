@@ -1,187 +1,254 @@
-import db from '../database';
-import { Account, PaginatedResponse, ImportRequest, ImportResult } from '../types';
+import { getDb, runInTransaction } from '../database';
+import { Account, ImportRequest, ImportResult, PaginatedResponse } from '../types';
 import { TagModel } from './Tag';
 
 const tagModel = new TagModel();
 
 export class AccountModel {
-  list(page = 1, pageSize = 20, search = ''): PaginatedResponse<Account> {
+  async list(page = 1, pageSize = 20, search = ''): Promise<PaginatedResponse<Account>> {
     const offset = (page - 1) * pageSize;
     let where = '';
-    const params: any[] = [];
+    const params: string[] = [];
+
     if (search) {
       where = 'WHERE email LIKE ?';
       params.push(`%${search}%`);
     }
-    const total = (db.prepare(`SELECT COUNT(*) as c FROM accounts ${where}`).get(...params) as any).c;
-    const list = db.prepare(`SELECT * FROM accounts ${where} ORDER BY id DESC LIMIT ? OFFSET ?`).all(...params, pageSize, offset) as Account[];
-    const listWithTags = list.map(acc => ({
-      ...acc,
-      tags: tagModel.getTagsByAccountId(acc.id),
-    }));
-    return { list: listWithTags, total, page, pageSize };
+
+    const totalRow = await getDb().get<{ c: number }>(`SELECT COUNT(*) as c FROM accounts ${where}`, ...params);
+    const list = (await getDb().all<Account[]>(
+      `SELECT * FROM accounts ${where} ORDER BY id DESC LIMIT ? OFFSET ?`,
+      ...params,
+      pageSize,
+      offset,
+    )) as Account[];
+    const listWithTags = await Promise.all(
+      list.map(async (account) => ({
+        ...account,
+        tags: await tagModel.getTagsByAccountId(account.id),
+      })),
+    );
+
+    return { list: listWithTags as Account[], total: totalRow?.c ?? 0, page, pageSize };
   }
 
-  getById(id: number): Account | undefined {
-    const acc = db.prepare('SELECT * FROM accounts WHERE id = ?').get(id) as Account | undefined;
-    if (!acc) return undefined;
-    return { ...acc, tags: tagModel.getTagsByAccountId(acc.id) } as any;
+  async getById(id: number): Promise<Account | undefined> {
+    const account = (await getDb().get<Account>('SELECT * FROM accounts WHERE id = ?', id)) ?? undefined;
+    if (!account) {
+      return undefined;
+    }
+
+    return {
+      ...account,
+      tags: await tagModel.getTagsByAccountId(account.id),
+    } as Account;
   }
 
-  create(data: Partial<Account>): Account {
-    const stmt = db.prepare('INSERT INTO accounts (email, password, client_id, refresh_token) VALUES (?, ?, ?, ?)');
-    const result = stmt.run(data.email, data.password || '', data.client_id, data.refresh_token);
-    return this.getById(result.lastInsertRowid as number)!;
+  async create(data: Partial<Account>): Promise<Account> {
+    const result = await getDb().run(
+      'INSERT INTO accounts (email, password, client_id, refresh_token) VALUES (?, ?, ?, ?)',
+      data.email,
+      data.password || '',
+      data.client_id,
+      data.refresh_token,
+    );
+    return (await this.getById(result.lastID!))!;
   }
 
-  update(id: number, data: Partial<Account>): Account | undefined {
+  async update(id: number, data: Partial<Account>): Promise<Account | undefined> {
     const fields: string[] = [];
-    const values: any[] = [];
-    for (const [key, val] of Object.entries(data)) {
-      if (['email', 'password', 'client_id', 'refresh_token', 'remark', 'status', 'token_refreshed_at'].includes(key)) {
+    const values: Array<string | number | null> = [];
+
+    for (const [key, value] of Object.entries(data)) {
+      if (['email', 'password', 'client_id', 'refresh_token', 'remark', 'status', 'token_refreshed_at'].includes(key) && value !== undefined) {
         fields.push(`${key} = ?`);
-        values.push(val);
+        values.push(value as string | number | null);
       }
     }
-    if (fields.length === 0) return this.getById(id);
+
+    if (fields.length === 0) {
+      return this.getById(id);
+    }
+
     fields.push('updated_at = CURRENT_TIMESTAMP');
     values.push(id);
-    db.prepare(`UPDATE accounts SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    await getDb().run(`UPDATE accounts SET ${fields.join(', ')} WHERE id = ?`, ...values);
     return this.getById(id);
   }
 
-  delete(id: number): boolean {
-    const result = db.prepare('DELETE FROM accounts WHERE id = ?').run(id);
-    return result.changes > 0;
+  async delete(id: number): Promise<boolean> {
+    const result = await getDb().run('DELETE FROM accounts WHERE id = ?', id);
+    return (result.changes ?? 0) > 0;
   }
 
-  batchDelete(ids: number[]): number {
+  async batchDelete(ids: number[]): Promise<number> {
     const placeholders = ids.map(() => '?').join(',');
-    const result = db.prepare(`DELETE FROM accounts WHERE id IN (${placeholders})`).run(...ids);
-    return result.changes;
+    const result = await getDb().run(`DELETE FROM accounts WHERE id IN (${placeholders})`, ...ids);
+    return result.changes ?? 0;
   }
 
-  importPreview(req: ImportRequest): { newItems: any[]; duplicates: any[]; errors: string[] } {
+  async importPreview(req: ImportRequest): Promise<{ newItems: any[]; duplicates: any[]; errors: string[] }> {
     const { content, separator = '----', format = ['email', 'password', 'client_id', 'refresh_token'] } = req;
-    const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
+    const lines = content.split('\n').map((line) => line.trim()).filter(Boolean);
     const newItems: any[] = [];
     const duplicates: any[] = [];
     const errors: string[] = [];
 
-    for (let i = 0; i < lines.length; i++) {
-      const parts = lines[i].split(separator);
+    for (let index = 0; index < lines.length; index++) {
+      const parts = lines[index].split(separator);
       const record: Record<string, string> = {};
-      format.forEach((field, idx) => { record[field] = (parts[idx] || '').trim(); });
+      format.forEach((field, fieldIndex) => {
+        record[field] = (parts[fieldIndex] || '').trim();
+      });
 
       if (!record.email || !record.client_id || !record.refresh_token) {
-        errors.push(`Line ${i + 1}: missing required fields`);
+        errors.push(`Line ${index + 1}: missing required fields`);
         continue;
       }
 
-      const existing = db.prepare('SELECT id FROM accounts WHERE email = ?').get(record.email);
-      const item = { line: i + 1, ...record };
-      if (existing) duplicates.push(item);
-      else newItems.push(item);
+      const existing = await getDb().get<{ id: number }>('SELECT id FROM accounts WHERE email = ?', record.email);
+      const item = { line: index + 1, ...record };
+      if (existing) {
+        duplicates.push(item);
+      } else {
+        newItems.push(item);
+      }
     }
 
     return { newItems, duplicates, errors };
   }
 
-  importConfirm(req: ImportRequest & { mode: 'skip' | 'overwrite' }): ImportResult {
+  async importConfirm(req: ImportRequest & { mode: 'skip' | 'overwrite' }): Promise<ImportResult> {
     const { content, separator = '----', format = ['email', 'password', 'client_id', 'refresh_token'], mode } = req;
-    const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
-    let imported = 0, skipped = 0;
+    const lines = content.split('\n').map((line) => line.trim()).filter(Boolean);
+    let imported = 0;
+    let skipped = 0;
     const errors: string[] = [];
 
-    const insertStmt = db.prepare('INSERT OR IGNORE INTO accounts (email, password, client_id, refresh_token) VALUES (?, ?, ?, ?)');
-    const updateStmt = db.prepare('UPDATE accounts SET password = ?, client_id = ?, refresh_token = ?, updated_at = CURRENT_TIMESTAMP WHERE email = ?');
-
-    const transaction = db.transaction(() => {
-      for (let i = 0; i < lines.length; i++) {
-        const parts = lines[i].split(separator);
+    await runInTransaction(async (db) => {
+      for (let index = 0; index < lines.length; index++) {
+        const parts = lines[index].split(separator);
         const record: Record<string, string> = {};
-        format.forEach((field, idx) => { record[field] = (parts[idx] || '').trim(); });
+        format.forEach((field, fieldIndex) => {
+          record[field] = (parts[fieldIndex] || '').trim();
+        });
 
         if (!record.email || !record.client_id || !record.refresh_token) {
-          errors.push(`Line ${i + 1}: missing required fields`);
+          errors.push(`Line ${index + 1}: missing required fields`);
           continue;
         }
 
-        const existing = db.prepare('SELECT id FROM accounts WHERE email = ?').get(record.email);
+        const existing = await db.get<{ id: number }>('SELECT id FROM accounts WHERE email = ?', record.email);
         if (existing) {
           if (mode === 'overwrite') {
-            updateStmt.run(record.password || '', record.client_id, record.refresh_token, record.email);
+            await db.run(
+              'UPDATE accounts SET password = ?, client_id = ?, refresh_token = ?, updated_at = CURRENT_TIMESTAMP WHERE email = ?',
+              record.password || '',
+              record.client_id,
+              record.refresh_token,
+              record.email,
+            );
             imported++;
           } else {
             skipped++;
           }
         } else {
-          insertStmt.run(record.email, record.password || '', record.client_id, record.refresh_token);
+          await db.run(
+            'INSERT OR IGNORE INTO accounts (email, password, client_id, refresh_token) VALUES (?, ?, ?, ?)',
+            record.email,
+            record.password || '',
+            record.client_id,
+            record.refresh_token,
+          );
           imported++;
         }
       }
     });
-    transaction();
+
     return { imported, skipped, errors };
   }
 
-  import(req: ImportRequest): ImportResult {
+  async import(req: ImportRequest): Promise<ImportResult> {
     const { content, separator = '----', format = ['email', 'password', 'client_id', 'refresh_token'] } = req;
-    const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
-    let imported = 0, skipped = 0;
+    const lines = content.split('\n').map((line) => line.trim()).filter(Boolean);
+    let imported = 0;
+    let skipped = 0;
     const errors: string[] = [];
 
-    const insertStmt = db.prepare('INSERT OR IGNORE INTO accounts (email, password, client_id, refresh_token) VALUES (?, ?, ?, ?)');
-    const transaction = db.transaction(() => {
-      for (let i = 0; i < lines.length; i++) {
-        const parts = lines[i].split(separator);
+    await runInTransaction(async (db) => {
+      for (let index = 0; index < lines.length; index++) {
+        const parts = lines[index].split(separator);
         const record: Record<string, string> = {};
-        format.forEach((field, idx) => { record[field] = (parts[idx] || '').trim(); });
+        format.forEach((field, fieldIndex) => {
+          record[field] = (parts[fieldIndex] || '').trim();
+        });
 
         if (!record.email || !record.client_id || !record.refresh_token) {
-          errors.push(`Line ${i + 1}: missing required fields`);
+          errors.push(`Line ${index + 1}: missing required fields`);
           continue;
         }
-        const result = insertStmt.run(record.email, record.password || '', record.client_id, record.refresh_token);
-        if (result.changes > 0) imported++;
-        else skipped++;
+
+        const result = await db.run(
+          'INSERT OR IGNORE INTO accounts (email, password, client_id, refresh_token) VALUES (?, ?, ?, ?)',
+          record.email,
+          record.password || '',
+          record.client_id,
+          record.refresh_token,
+        );
+
+        if ((result.changes ?? 0) > 0) {
+          imported++;
+        } else {
+          skipped++;
+        }
       }
     });
-    transaction();
+
     return { imported, skipped, errors };
   }
 
-  export(ids?: number[], separator = '----', format = ['email', 'password', 'client_id', 'refresh_token']): string {
+  async export(ids?: number[], separator = '----', format = ['email', 'password', 'client_id', 'refresh_token']): Promise<string> {
     let accounts: Account[];
+
     if (ids && ids.length > 0) {
       const placeholders = ids.map(() => '?').join(',');
-      accounts = db.prepare(`SELECT * FROM accounts WHERE id IN (${placeholders})`).all(...ids) as Account[];
+      accounts = (await getDb().all<Account[]>(`SELECT * FROM accounts WHERE id IN (${placeholders})`, ...ids)) as Account[];
     } else {
-      accounts = db.prepare('SELECT * FROM accounts').all() as Account[];
+      accounts = (await getDb().all<Account[]>('SELECT * FROM accounts')) as Account[];
     }
-    return accounts.map(acc => format.map(f => (acc as any)[f] || '').join(separator)).join('\n');
+
+    return accounts
+      .map((account) => format.map((field) => String((account as unknown as Record<string, unknown>)[field] ?? '')).join(separator))
+      .join('\n');
   }
 
-  updateSyncTime(id: number) {
-    db.prepare('UPDATE accounts SET last_synced_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+  async updateSyncTime(id: number): Promise<void> {
+    await getDb().run('UPDATE accounts SET last_synced_at = CURRENT_TIMESTAMP WHERE id = ?', id);
   }
 
-  updateTokenRefreshTime(id: number, newRefreshToken?: string) {
+  async updateTokenRefreshTime(id: number, newRefreshToken?: string): Promise<void> {
     if (newRefreshToken) {
-      db.prepare('UPDATE accounts SET token_refreshed_at = CURRENT_TIMESTAMP, refresh_token = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .run(newRefreshToken, 'active', id);
-    } else {
-      db.prepare('UPDATE accounts SET token_refreshed_at = CURRENT_TIMESTAMP, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .run('active', id);
+      await getDb().run(
+        'UPDATE accounts SET token_refreshed_at = CURRENT_TIMESTAMP, refresh_token = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        newRefreshToken,
+        'active',
+        id,
+      );
+      return;
     }
+
+    await getDb().run(
+      'UPDATE accounts SET token_refreshed_at = CURRENT_TIMESTAMP, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      'active',
+      id,
+    );
   }
 
-  markError(id: number) {
-    db.prepare('UPDATE accounts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-      .run('error', id);
+  async markError(id: number): Promise<void> {
+    await getDb().run('UPDATE accounts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', 'error', id);
   }
 
-  getAll(): Account[] {
-    return db.prepare('SELECT * FROM accounts ORDER BY id DESC').all() as Account[];
+  async getAll(): Promise<Account[]> {
+    return (await getDb().all<Account[]>('SELECT * FROM accounts ORDER BY id DESC')) as Account[];
   }
 }

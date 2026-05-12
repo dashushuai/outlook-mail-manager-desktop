@@ -1,14 +1,20 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ImportRequest, ImportPreviewResult } from '../../types';
 import { accountApi } from '../../lib/api';
+import { getDesktopFileShellContainer, isDesktopFileDialogAvailable, openDesktopFile } from '../../lib/desktopFiles';
+
+export type InitialImportFile = ImportRequest & {
+  fileName: string;
+};
 
 interface Props {
   open: boolean;
   onClose: () => void;
   onImport: () => void;
+  initialFile?: InitialImportFile | null;
 }
 
-export default function ImportDialog({ open, onClose, onImport }: Props) {
+export default function ImportDialog({ open, onClose, onImport, initialFile }: Props) {
   const [content, setContent] = useState('');
   const [separator, setSeparator] = useState('----');
   const [format, setFormat] = useState<string[]>(['email', 'password', 'client_id', 'refresh_token']);
@@ -18,15 +24,55 @@ export default function ImportDialog({ open, onClose, onImport }: Props) {
   const [mode, setMode] = useState<'skip' | 'overwrite'>('skip');
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    if (!open || !initialFile) {
+      return;
+    }
+
+    setFileName(initialFile.fileName);
+    setContent(initialFile.content);
+    setSeparator(initialFile.separator);
+    setFormat(initialFile.format);
+    setStep('input');
+    setPreviewData(null);
+  }, [open, initialFile]);
+
   if (!open) return null;
+
+  const loadFileContent = (name: string, value: string) => {
+    setFileName(name);
+    setContent(value);
+  };
+
+  const handleDesktopFile = async (event: React.MouseEvent<HTMLLabelElement>) => {
+    const container = getDesktopFileShellContainer();
+    if (!isDesktopFileDialogAvailable(container)) {
+      return;
+    }
+
+    event.preventDefault();
+
+    try {
+      const result = await openDesktopFile(container, {
+        title: '选择账户文件',
+        filters: [{ name: 'Text', extensions: ['txt', 'csv'] }],
+        encoding: 'utf8',
+      });
+
+      if (result) {
+        loadFileContent(result.fileName, result.content);
+      }
+    } catch (err: any) {
+      alert('读取文件失败: ' + (err.message || '未知错误'));
+    }
+  };
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setFileName(file.name);
     const reader = new FileReader();
     reader.onload = (ev) => {
-      setContent((ev.target?.result as string) || '');
+      loadFileContent(file.name, (ev.target?.result as string) || '');
     };
     reader.readAsText(file);
   };
@@ -91,7 +137,7 @@ export default function ImportDialog({ open, onClose, onImport }: Props) {
             {/* File picker */}
             <div>
               <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">选择文件</label>
-              <label className="flex items-center gap-2 px-4 py-2 rounded-lg border border-dashed border-zinc-300 dark:border-zinc-600 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors">
+              <label onClick={handleDesktopFile} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-dashed border-zinc-300 dark:border-zinc-600 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors">
                 <svg className="w-5 h-5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
                 <span className="text-sm text-zinc-600 dark:text-zinc-400">{fileName || '点击选择 .txt / .csv 文件'}</span>
                 <input type="file" accept=".txt,.csv" onChange={handleFile} className="hidden" />

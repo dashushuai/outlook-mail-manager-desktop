@@ -1,54 +1,61 @@
-import db from '../database';
+import { getDb, runInTransaction } from '../database';
 import { Tag } from '../types';
 
 export class TagModel {
-  list(): Tag[] {
-    return db.prepare('SELECT * FROM tags ORDER BY name').all() as Tag[];
+  async list(): Promise<Tag[]> {
+    return (await getDb().all<Tag[]>('SELECT * FROM tags ORDER BY name')) as Tag[];
   }
 
-  getById(id: number): Tag | undefined {
-    return db.prepare('SELECT * FROM tags WHERE id = ?').get(id) as Tag | undefined;
+  async getById(id: number): Promise<Tag | undefined> {
+    return (await getDb().get<Tag>('SELECT * FROM tags WHERE id = ?', id)) ?? undefined;
   }
 
-  create(name: string, color = '#3B82F6'): Tag {
-    const result = db.prepare('INSERT INTO tags (name, color) VALUES (?, ?)').run(name, color);
-    return this.getById(result.lastInsertRowid as number)!;
+  async create(name: string, color = '#3B82F6'): Promise<Tag> {
+    const result = await getDb().run('INSERT INTO tags (name, color) VALUES (?, ?)', name, color);
+    return (await this.getById(result.lastID!))!;
   }
 
-  update(id: number, data: { name?: string; color?: string }): Tag | undefined {
+  async update(id: number, data: { name?: string; color?: string }): Promise<Tag | undefined> {
     const fields: string[] = [];
-    const values: any[] = [];
-    if (data.name !== undefined) { fields.push('name = ?'); values.push(data.name); }
-    if (data.color !== undefined) { fields.push('color = ?'); values.push(data.color); }
-    if (fields.length === 0) return this.getById(id);
+    const values: Array<string | number> = [];
+
+    if (data.name !== undefined) {
+      fields.push('name = ?');
+      values.push(data.name);
+    }
+    if (data.color !== undefined) {
+      fields.push('color = ?');
+      values.push(data.color);
+    }
+    if (fields.length === 0) {
+      return this.getById(id);
+    }
+
     values.push(id);
-    db.prepare(`UPDATE tags SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    await getDb().run(`UPDATE tags SET ${fields.join(', ')} WHERE id = ?`, ...values);
     return this.getById(id);
   }
 
-  delete(id: number): boolean {
-    const result = db.prepare('DELETE FROM tags WHERE id = ?').run(id);
-    return result.changes > 0;
+  async delete(id: number): Promise<boolean> {
+    const result = await getDb().run('DELETE FROM tags WHERE id = ?', id);
+    return (result.changes ?? 0) > 0;
   }
 
-  getTagsByAccountId(accountId: number): Tag[] {
-    return db.prepare(`
+  async getTagsByAccountId(accountId: number): Promise<Tag[]> {
+    return (await getDb().all<Tag[]>(`
       SELECT t.* FROM tags t
       JOIN account_tags at ON t.id = at.tag_id
       WHERE at.account_id = ?
       ORDER BY t.name
-    `).all(accountId) as Tag[];
+    `, accountId)) as Tag[];
   }
 
-  setAccountTags(accountId: number, tagIds: number[]): void {
-    const del = db.prepare('DELETE FROM account_tags WHERE account_id = ?');
-    const ins = db.prepare('INSERT OR IGNORE INTO account_tags (account_id, tag_id) VALUES (?, ?)');
-    const transaction = db.transaction(() => {
-      del.run(accountId);
+  async setAccountTags(accountId: number, tagIds: number[]): Promise<void> {
+    await runInTransaction(async (db) => {
+      await db.run('DELETE FROM account_tags WHERE account_id = ?', accountId);
       for (const tagId of tagIds) {
-        ins.run(accountId, tagId);
+        await db.run('INSERT OR IGNORE INTO account_tags (account_id, tag_id) VALUES (?, ?)', accountId, tagId);
       }
     });
-    transaction();
   }
 }

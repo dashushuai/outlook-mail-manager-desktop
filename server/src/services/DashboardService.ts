@@ -8,36 +8,40 @@ const cacheModel = new MailCacheModel();
 const proxyModel = new ProxyModel();
 
 export class DashboardService {
-  getStats(): DashboardStats {
-    const accounts = accountModel.getAll();
-    const proxies = proxyModel.list();
-    const recentMails = cacheModel.getRecent(5);
+  async getStats(): Promise<DashboardStats> {
+    const accounts = await accountModel.getAll();
+    const proxies = await proxyModel.list();
+    const recentMails = await cacheModel.getRecent(5);
 
-    const accountStats = accounts.map(acc => ({
-      account_id: acc.id,
-      email: acc.email,
-      inbox_count: cacheModel.countByAccount(acc.id, 'INBOX'),
-      junk_count: cacheModel.countByAccount(acc.id, 'Junk'),
-    }));
+    const accountStats = await Promise.all(
+      accounts.map(async (account) => ({
+        account_id: account.id,
+        email: account.email,
+        inbox_count: await cacheModel.countByAccount(account.id, 'INBOX'),
+        junk_count: await cacheModel.countByAccount(account.id, 'Junk'),
+      })),
+    );
 
     const now = Date.now();
     const sixtyDaysMs = 60 * 24 * 60 * 60 * 1000;
 
     return {
       totalAccounts: accounts.length,
-      activeAccounts: accounts.filter(a => a.status === 'active').length,
-      totalInboxMails: cacheModel.countAll('INBOX'),
-      totalJunkMails: cacheModel.countAll('Junk'),
+      activeAccounts: accounts.filter((account) => account.status === 'active').length,
+      totalInboxMails: await cacheModel.countAll('INBOX'),
+      totalJunkMails: await cacheModel.countAll('Junk'),
       totalProxies: proxies.length,
-      activeProxies: proxies.filter(p => p.status === 'active').length,
+      activeProxies: proxies.filter((proxy) => proxy.status === 'active').length,
       recentMails,
       accountStats,
-      expiringTokens: accounts.filter(a => {
-        if (!a.token_refreshed_at) return false;
-        return (now - new Date(a.token_refreshed_at).getTime()) > sixtyDaysMs;
+      expiringTokens: accounts.filter((account) => {
+        if (!account.token_refreshed_at) {
+          return false;
+        }
+        return now - new Date(account.token_refreshed_at).getTime() > sixtyDaysMs;
       }).length,
-      errorAccounts: accounts.filter(a => a.status === 'error').length,
-      unusedAccounts: accounts.filter(a => !a.token_refreshed_at).length,
+      errorAccounts: accounts.filter((account) => account.status === 'error').length,
+      unusedAccounts: accounts.filter((account) => !account.token_refreshed_at).length,
     };
   }
 }

@@ -1,7 +1,31 @@
 import { useState } from 'react';
+import { getDesktopFileShellContainer, isDesktopFileDialogAvailable, openDesktopFile } from '../../lib/desktopFiles';
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = '';
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+
+  return btoa(binary);
+}
 
 export default function BackupRestore() {
   const [restoring, setRestoring] = useState(false);
+
+  const downloadBackupInBrowser = (blob: Blob, fileName: string) => {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  };
 
   const handleDownload = async () => {
     try {
@@ -13,16 +37,64 @@ export default function BackupRestore() {
       if (!res.ok) throw new Error('下载失败');
 
       const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `backup-${new Date().toISOString().replace(/[:.]/g, '-')}.db`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
+      const fileName = `backup-${new Date().toISOString().replace(/[:.]/g, '-')}.db`;
+      downloadBackupInBrowser(blob, fileName);
     } catch (err: any) {
       alert('备份下载失败: ' + err.message);
+    }
+  };
+
+  const restoreBackup = async (fileContent: string) => {
+    setRestoring(true);
+    try {
+      const token = localStorage.getItem('auth_token');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch('/api/backup/restore', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ fileContent })
+      });
+
+      const json = await res.json();
+      if (json.code !== 200) throw new Error(json.message || '恢复失败');
+
+      alert('✅ 数据库恢复成功！页面将刷新。');
+      window.location.reload();
+    } catch (err: any) {
+      alert('恢复失败: ' + err.message);
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  const handleDesktopRestore = async (event: React.MouseEvent<HTMLLabelElement>) => {
+    const container = getDesktopFileShellContainer();
+    if (!isDesktopFileDialogAvailable(container)) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (restoring) {
+      return;
+    }
+
+    try {
+      const result = await openDesktopFile(container, {
+        title: '选择数据库备份',
+        filters: [{ name: 'SQLite Database', extensions: ['db'] }],
+        encoding: 'base64',
+      });
+
+      if (!result || !confirm('⚠️ 恢复数据库将覆盖当前所有数据，是否继续？')) {
+        return;
+      }
+
+      await restoreBackup(result.content);
+    } catch (err: any) {
+      alert('恢复失败: ' + (err.message || '未知错误'));
     }
   };
 
@@ -35,36 +107,18 @@ export default function BackupRestore() {
       return;
     }
 
-    setRestoring(true);
-    try {
-      const reader = new FileReader();
-      reader.onload = async (ev) => {
-        const arrayBuffer = ev.target?.result as ArrayBuffer;
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-
-        const token = localStorage.getItem('auth_token');
-        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-
-        const res = await fetch('/api/backup/restore', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ fileContent: base64 })
-        });
-
-        const json = await res.json();
-        if (json.code !== 200) throw new Error(json.message || '恢复失败');
-
-        alert('✅ 数据库恢复成功！页面将刷新。');
-        window.location.reload();
-      };
-      reader.readAsArrayBuffer(file);
-    } catch (err: any) {
-      alert('恢复失败: ' + err.message);
-    } finally {
-      setRestoring(false);
-      e.target.value = '';
-    }
+    const input = e.target;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const arrayBuffer = ev.target?.result as ArrayBuffer;
+      await restoreBackup(arrayBufferToBase64(arrayBuffer));
+      input.value = '';
+    };
+    reader.onerror = () => {
+      alert('恢复失败: 文件读取失败');
+      input.value = '';
+    };
+    reader.readAsArrayBuffer(file);
   };
 
   return (
@@ -79,7 +133,7 @@ export default function BackupRestore() {
         备份
       </button>
 
-      <label className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-zinc-300 dark:border-zinc-600 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer">
+      <label onClick={handleDesktopRestore} className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-zinc-300 dark:border-zinc-600 text-zinc-700 dark:text-zinc-300 transition-colors ${restoring ? 'opacity-50 cursor-not-allowed' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer'}`}>
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
         </svg>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { DragEvent } from 'react';
 import { toast } from 'sonner';
 import { useAccountStore } from '../stores/accounts';
 import { useTagStore } from '../stores/tags';
@@ -7,9 +8,12 @@ import AccountToolbar from '../components/accounts/AccountToolbar';
 import AccountTable, { getDefaultVisibleColumns, COLUMN_STORAGE_KEY } from '../components/accounts/AccountTable';
 import EditAccountDialog from '../components/accounts/EditAccountDialog';
 import ImportDialog from '../components/accounts/ImportDialog';
+import type { InitialImportFile } from '../components/accounts/ImportDialog';
 import PasteImportDialog from '../components/accounts/PasteImportDialog';
 import { MailViewerDialog } from '../components/accounts/MailViewerDialog';
 import BackupRestore from '../components/accounts/BackupRestore';
+import { getDesktopFileShellContainer, isDesktopFileDialogAvailable, saveDesktopFile } from '../lib/desktopFiles';
+import { isJsonAccountImportFile, parseAccountImportJson } from '../lib/accountImportFiles';
 
 export default function Accounts() {
   const {
@@ -23,6 +27,8 @@ export default function Accounts() {
   const [editOpen, setEditOpen] = useState(false);
   const [editAccount, setEditAccount] = useState<Account | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [initialImportFile, setInitialImportFile] = useState<InitialImportFile | null>(null);
+  const [draggingJsonImport, setDraggingJsonImport] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [mailViewAccount, setMailViewAccount] = useState<Account | null>(null);
   const [mailViewMailbox, setMailViewMailbox] = useState<'INBOX' | 'Junk'>('INBOX');
@@ -88,16 +94,38 @@ export default function Accounts() {
   };
 
 
+  const downloadTextFile = (content: string, fileName: string) => {
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleExport = async (ids?: number[]) => {
     try {
       const content = await exportAccounts({ ids, separator: '----', format: ['email', 'password', 'client_id', 'refresh_token'] });
-      const blob = new Blob([content], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `accounts_${new Date().toISOString().slice(0, 10)}.txt`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const fileName = `accounts_${new Date().toISOString().slice(0, 10)}.txt`;
+      const container = getDesktopFileShellContainer();
+
+      if (isDesktopFileDialogAvailable(container)) {
+        const saved = await saveDesktopFile(container, {
+          title: '导出账户',
+          defaultPath: fileName,
+          filters: [{ name: 'Text', extensions: ['txt'] }],
+          content,
+          encoding: 'utf8',
+        });
+
+        if (!saved) {
+          return;
+        }
+      } else {
+        downloadTextFile(content, fileName);
+      }
+
       toast.success('导出成功');
     } catch (e: any) {
       toast.error(e.message || '导出失败');
@@ -108,6 +136,52 @@ export default function Accounts() {
     setMailViewAccount(account);
     setMailViewMailbox(mailbox);
     setMailViewOpen(true);
+  };
+
+  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
+    const hasJsonFile = Array.from(event.dataTransfer.items).some((item) => {
+      if (item.kind !== 'file') {
+        return false;
+      }
+
+      const file = item.getAsFile();
+      return file ? isJsonAccountImportFile(file) : item.type === 'application/json';
+    });
+
+    if (!hasJsonFile) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    setDraggingJsonImport(true);
+  };
+
+  const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      return;
+    }
+
+    setDraggingJsonImport(false);
+  };
+
+  const handleDrop = async (event: DragEvent<HTMLDivElement>) => {
+    const file = Array.from(event.dataTransfer.files).find(isJsonAccountImportFile);
+
+    if (!file) {
+      return;
+    }
+
+    event.preventDefault();
+    setDraggingJsonImport(false);
+
+    try {
+      const parsed = parseAccountImportJson(await file.text());
+      setInitialImportFile({ ...parsed, fileName: file.name });
+      setImportOpen(true);
+    } catch (e: any) {
+      toast.error(e.message || 'JSON 导入文件读取失败');
+    }
   };
 
   const handleToggleTag = async (accountId: number, tagId: number) => {
@@ -145,7 +219,15 @@ export default function Accounts() {
   const totalPages = Math.ceil(pagination.total / pagination.pageSize);
 
   return (
-    <div className="space-y-4">
+    <div
+      className="space-y-4"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      <div className={`rounded-xl border border-dashed px-4 py-3 text-sm transition-colors ${draggingJsonImport ? 'border-blue-400 bg-blue-50 text-blue-700 dark:border-blue-500 dark:bg-blue-950/30 dark:text-blue-300' : 'border-zinc-300 text-zinc-500 dark:border-zinc-700 dark:text-zinc-400'}`}>
+        拖拽 .json 账户文件到这里导入
+      </div>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -169,7 +251,10 @@ export default function Accounts() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         selectedCount={selectedIds.length}
-        onFileImport={() => setImportOpen(true)}
+        onFileImport={() => {
+          setInitialImportFile(null);
+          setImportOpen(true);
+        }}
         onPasteImport={() => setPasteOpen(true)}
         onExportSelected={() => handleExport(selectedIds)}
         onExportAll={() => handleExport()}
@@ -243,7 +328,15 @@ export default function Accounts() {
         onCreateTag={handleCreateTag}
         onDeleteTag={handleDeleteTag}
       />
-      <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} onImport={() => fetchAccounts()} />
+      <ImportDialog
+        open={importOpen}
+        onClose={() => {
+          setImportOpen(false);
+          setInitialImportFile(null);
+        }}
+        onImport={() => fetchAccounts()}
+        initialFile={initialImportFile}
+      />
       <PasteImportDialog open={pasteOpen} onClose={() => setPasteOpen(false)} onImport={() => fetchAccounts()} />
       {mailViewAccount && (
         <MailViewerDialog

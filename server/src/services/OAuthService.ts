@@ -1,18 +1,18 @@
-import { ProxyService } from './ProxyService';
 import logger from '../utils/logger';
+import { ProxyService } from './ProxyService';
 
 const proxyService = new ProxyService();
 
 interface TokenResult {
   access_token: string;
-  refresh_token?: string;  // 新增：微软返回的新 refresh_token
+  refresh_token?: string;
   has_mail_scope?: boolean;
   expires_in: number;
 }
 
 export class OAuthService {
   async refreshGraphToken(clientId: string, refreshToken: string, proxyId?: number): Promise<TokenResult> {
-    const { agent, dispatcher, type } = proxyService.getAgent(proxyId);
+    const { agent, dispatcher, type } = await proxyService.getAgent(proxyId);
 
     const body = new URLSearchParams({
       client_id: clientId,
@@ -37,7 +37,9 @@ export class OAuthService {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body,
       };
-      if (dispatcher) opts.dispatcher = dispatcher;
+      if (dispatcher) {
+        opts.dispatcher = dispatcher;
+      }
       response = await undiciFetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/token', opts);
     }
 
@@ -54,14 +56,14 @@ export class OAuthService {
 
     return {
       access_token: data.access_token,
-      refresh_token: data.refresh_token,  // 新增
+      refresh_token: data.refresh_token,
       has_mail_scope: hasMailScope,
       expires_in: data.expires_in,
     };
   }
 
   async refreshImapToken(clientId: string, refreshToken: string, proxyId?: number): Promise<TokenResult> {
-    const { agent, dispatcher, type } = proxyService.getAgent(proxyId);
+    const { agent, dispatcher, type } = await proxyService.getAgent(proxyId);
 
     const body = new URLSearchParams({
       client_id: clientId,
@@ -86,7 +88,9 @@ export class OAuthService {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body,
       };
-      if (dispatcher) opts.dispatcher = dispatcher;
+      if (dispatcher) {
+        opts.dispatcher = dispatcher;
+      }
       response = await undiciFetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/token', opts);
     }
 
@@ -102,7 +106,7 @@ export class OAuthService {
 
     return {
       access_token: data.access_token,
-      refresh_token: data.refresh_token,  // 新增
+      refresh_token: data.refresh_token,
       expires_in: data.expires_in,
     };
   }

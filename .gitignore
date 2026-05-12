@@ -1,6 +1,8 @@
 .omc/
 node_modules/
 dist/
+dist-electron/
+release/
 server/data/*.db
 server/data/*.db-shm
 server/data/*.db-wal
@@ -9,7 +11,6 @@ server/data/*.db-wal
 .env.local
 .env.*.local
 .DS_Store
-package-lock.json
 web/src/components/ui/
 *.pem
 *.key

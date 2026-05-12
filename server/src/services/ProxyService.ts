@@ -8,7 +8,7 @@ const proxyModel = new ProxyModel();
 
 export class ProxyService {
   createSocksAgent(proxy: Proxy): SocksProxyAgent {
-    let url = `socks5://`;
+    let url = 'socks5://';
     if (proxy.username && proxy.password) {
       url += `${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxy.password)}@`;
     }
@@ -17,7 +17,7 @@ export class ProxyService {
   }
 
   createHttpDispatcher(proxy: Proxy): ProxyAgent {
-    let url = `http://`;
+    let url = 'http://';
     if (proxy.username && proxy.password) {
       url += `${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxy.password)}@`;
     }
@@ -25,20 +25,17 @@ export class ProxyService {
     return new ProxyAgent(url);
   }
 
-  getAgent(proxyId?: number): { agent?: SocksProxyAgent; dispatcher?: ProxyAgent; type?: string } {
-    let proxy: Proxy | undefined;
-    if (proxyId) {
-      proxy = proxyModel.getById(proxyId);
-    } else {
-      proxy = proxyModel.getDefault();
+  async getAgent(proxyId?: number): Promise<{ agent?: SocksProxyAgent; dispatcher?: ProxyAgent; type?: string }> {
+    const proxy = proxyId ? await proxyModel.getById(proxyId) : await proxyModel.getDefault();
+    if (!proxy) {
+      return {};
     }
-    if (!proxy) return {};
 
     if (proxy.type === 'socks5') {
       return { agent: this.createSocksAgent(proxy), type: 'socks5' };
-    } else {
-      return { dispatcher: this.createHttpDispatcher(proxy), type: 'http' };
     }
+
+    return { dispatcher: this.createHttpDispatcher(proxy), type: 'http' };
   }
 
   async testProxy(proxy: Proxy): Promise<ProxyTestResult> {

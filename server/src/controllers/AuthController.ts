@@ -1,12 +1,12 @@
 import { Context } from 'koa';
 import crypto from 'crypto';
-import { config } from '../config';
+import { config, requiresAccessPassword } from '../config';
 import { success, fail } from '../utils/response';
 
 export class AuthController {
   async login(ctx: Context) {
     const { password } = ctx.request.body as any;
-    if (!config.accessPassword) {
+    if (!requiresAccessPassword()) {
       return success(ctx, { token: '', required: false });
     }
     if (password !== config.accessPassword) {
@@ -17,6 +17,6 @@ export class AuthController {
   }
 
   async check(ctx: Context) {
-    success(ctx, { required: !!config.accessPassword });
+    success(ctx, { required: requiresAccessPassword() });
   }
 }

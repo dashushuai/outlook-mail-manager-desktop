@@ -1,9 +1,14 @@
 import { Context } from 'koa';
 import fs from 'fs';
-import path from 'path';
+import { closeDb, createBackupSnapshot, getDbCompanionPaths, reopenDb } from '../database';
 import { success, fail } from '../utils/response';
+import { config } from '../config';
 
-const DB_PATH = path.join(__dirname, '../../data/database.db');
+const DB_PATH = config.dbPath;
+
+function removeFileIfExists(filePath: string) {
+  fs.rmSync(filePath, { force: true });
+}
 
 export class BackupController {
   async download(ctx: Context) {
@@ -12,9 +17,23 @@ export class BackupController {
     }
 
     const fileName = `backup-${new Date().toISOString().replace(/[:.]/g, '-')}.db`;
-    ctx.set('Content-Type', 'application/octet-stream');
-    ctx.set('Content-Disposition', `attachment; filename="${fileName}"`);
-    ctx.body = fs.createReadStream(DB_PATH);
+    const snapshotPath = `${DB_PATH}.snapshot-${Date.now()}`;
+
+    try {
+      await createBackupSnapshot(snapshotPath);
+
+      const stream = fs.createReadStream(snapshotPath);
+      const cleanup = () => removeFileIfExists(snapshotPath);
+      stream.once('close', cleanup);
+      stream.once('error', cleanup);
+
+      ctx.set('Content-Type', 'application/octet-stream');
+      ctx.set('Content-Disposition', `attachment; filename="${fileName}"`);
+      ctx.body = stream;
+    } catch (err: any) {
+      removeFileIfExists(snapshotPath);
+      return fail(ctx, `Backup failed: ${err.message}`, 500);
+    }
   }
 
   async restore(ctx: Context) {
@@ -24,31 +43,51 @@ export class BackupController {
       return fail(ctx, 'fileContent is required', 400);
     }
 
-    try {
-      // Decode base64 content
-      const buffer = Buffer.from(body.fileContent, 'base64');
+    const timestamp = Date.now();
+    const backupPath = `${DB_PATH}.backup-${timestamp}`;
+    const restorePath = `${DB_PATH}.restore-${timestamp}`;
+    let closedConnection = false;
 
-      // Validate it's a SQLite database (magic number check)
+    try {
+      const buffer = Buffer.from(body.fileContent, 'base64');
       const magic = buffer.toString('utf8', 0, 15);
       if (!magic.startsWith('SQLite format 3')) {
         return fail(ctx, 'Invalid SQLite database file', 400);
       }
 
-      // Backup current database
-      const backupPath = `${DB_PATH}.backup-${Date.now()}`;
+      fs.writeFileSync(restorePath, buffer);
+
       if (fs.existsSync(DB_PATH)) {
-        fs.copyFileSync(DB_PATH, backupPath);
+        await createBackupSnapshot(backupPath);
       }
 
-      // Write new database
-      fs.writeFileSync(DB_PATH, buffer);
+      await closeDb();
+      closedConnection = true;
+
+      removeFileIfExists(DB_PATH);
+      for (const companionPath of getDbCompanionPaths()) {
+        removeFileIfExists(companionPath);
+      }
+
+      fs.renameSync(restorePath, DB_PATH);
+      await reopenDb();
+      closedConnection = false;
 
       success(ctx, {
         message: 'Database restored successfully',
-        backup: backupPath
+        backup: fs.existsSync(backupPath) ? backupPath : null,
       });
     } catch (err: any) {
+      if (closedConnection) {
+        try {
+          await reopenDb();
+        } catch {
+          // Ignore reopen errors here and report the original restore failure.
+        }
+      }
       return fail(ctx, `Restore failed: ${err.message}`, 500);
+    } finally {
+      removeFileIfExists(restorePath);
     }
   }
 }
